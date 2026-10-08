@@ -135,8 +135,14 @@ function showSet(){
 
 /* ---------- 起動 ---------- */
 window.addEventListener('DOMContentLoaded', function(){
-  if (getUrl()) show('vScan');
-  else { show('vSet'); document.getElementById('url').focus(); }
+  if (!getUrl()){
+    show('vSet');
+    document.getElementById('url').focus();
+    return;
+  }
+  show('vScan');
+  // URL設定済みならカメラを自動で立ち上げる（タップを1回減らす）
+  setTimeout(startCam, 150);
 });
 
 /* ---------- カメラ ---------- */
