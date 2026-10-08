@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>医療機器DX台帳 QRスキャン</title>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+:root{
+  --bg:#f4f8f8; --card:#fff; --line:#dfe9ea; --ink:#1d2b2e; --sub:#6b8286;
+  --accent:#1f7f88; --accent-weak:#e2f2f3; --warn:#c2621f; --warn-weak:#fdefe2;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+  font-size:16px;line-height:1.6}
+.wrap{max-width:520px;margin:0 auto;padding:16px 14px 40px}
+h1{font-size:18px;margin:4px 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:15px;margin-bottom:12px}
+button{font-family:inherit;font-size:16px;border-radius:10px;border:0;padding:14px 16px;
+  cursor:pointer;font-weight:700;width:100%}
+.btn{background:var(--accent);color:#fff}
+.btn-sub{background:#fff;color:var(--accent);border:1px solid var(--accent)}
+.btn-big{padding:20px;font-size:18px}
+input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;
+  font-size:16px;font-family:inherit}
+label{display:block;font-size:13px;color:var(--sub);margin:0 0 4px}
+.msg{padding:10px 12px;border-radius:10px;font-size:14px;margin-bottom:12px}
+.msg.err{background:var(--warn-weak);color:var(--warn)}
+.msg.ok{background:var(--accent-weak);color:var(--accent)}
+.hide{display:none!important}
+.sub{font-size:12px;color:var(--sub)}
+.center{text-align:center}
+#camBox{position:relative;border-radius:12px;overflow:hidden;background:#000;
+  margin-bottom:10px}
+#cam{width:100%;display:block;aspect-ratio:3/4;object-fit:cover}
+#frame{position:absolute;inset:14%;border:3px solid rgba(255,255,255,.9);
+  border-radius:12px;pointer-events:none;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
+.hint{color:#fff;position:absolute;left:0;right:0;bottom:10px;text-align:center;
+  font-size:13px;text-shadow:0 1px 3px rgba(0,0,0,.8)}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#101819;--card:#172124;--line:#2b393d;--ink:#e6eef0;--sub:#93a6aa;
+    --accent:#6fc0c8;--accent-weak:#1c3134;--warn:#e9a06a;--warn-weak:#33261c}
+  input{background:#0e1618;color:var(--ink)}
+  .btn{color:#0e1618}
+  .btn-sub{background:transparent}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>📷 医療機器DX台帳 QRスキャン</h1>
+
+  <div id="err" class="msg err hide"></div>
+
+  <!-- 設定（初回のみ） -->
+  <div id="vSet" class="card hide">
+    <h2 style="font-size:15px;margin:0 0 10px">⚙️ 初回設定</h2>
+    <label for="url">点検画面のURL</label>
+    <input type="text" id="url" placeholder="https://script.google.com/macros/s/.../exec">
+    <p class="sub" style="margin-top:8px">
+      このスマホに保存されます。一度入れれば次回から不要です。</p>
+    <button class="btn" onclick="saveUrl()" style="margin-top:10px">保存する</button>
+  </div>
+
+  <!-- スキャン -->
+  <div id="vScan" class="hide">
+    <div class="card">
+      <div id="camBox" class="hide">
+        <video id="cam" playsinline muted></video>
+        <div id="frame"></div>
+        <div class="hint">🏷 QRを枠に合わせてね</div>
+      </div>
+
+      <button class="btn btn-big" id="btnStart" onclick="startCam()">
+        📷 カメラでQRを読む</button>
+      <button class="btn-sub hide" id="btnStop" onclick="stopCam()"
+              style="margin-top:8px">やめる</button>
+
+      <p class="sub center" style="margin:16px 0 6px">— または手入力 —</p>
+      <label for="no">🏷 管理番号</label>
+      <input type="text" id="no" placeholder="A1403" autocapitalize="characters"
+             onkeydown="if(event.key==='Enter')goManual()">
+      <button class="btn-sub" onclick="goManual()" style="margin-top:8px">開く</button>
+    </div>
+
+    <button class="btn-sub" onclick="showSet()">⚙️ URL設定を変える</button>
+  </div>
+
+</div>
+
+<canvas id="cv" class="hide"></canvas>
+
+<script>
+var SCAN = { stream:null, raf:0, on:false };
+
+function esc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function err(m){
+  var e = document.getElementById('err');
+  e.textContent = '⚠️ ' + m;
+  e.classList.remove('hide');
+  setTimeout(function(){ e.classList.add('hide'); }, 6000);
+}
+function show(id){
+  ['vSet','vScan'].forEach(function(v){
+    document.getElementById(v).classList.toggle('hide', v !== id);
+  });
+}
+
+/* ---------- URL設定 ---------- */
+function getUrl(){ try{ return localStorage.getItem('mkdx_url') || ''; }catch(e){ return ''; } }
+
+function saveUrl(){
+  var u = document.getElementById('url').value.trim();
+  if (!u){ err('URLを入力してください'); return; }
+  if (u.indexOf('https://script.google.com/') !== 0){
+    err('GASのURLを入れてください（https://script.google.com/ で始まるもの）');
+    return;
+  }
+  try{ localStorage.setItem('mkdx_url', u); }catch(e){}
+  show('vScan');
+}
+
+function showSet(){
+  document.getElementById('url').value = getUrl();
+  stopCam();
+  show('vSet');
+}
+
+/* ---------- 起動 ---------- */
+window.addEventListener('DOMContentLoaded', function(){
+  if (getUrl()) show('vScan');
+  else { show('vSet'); document.getElementById('url').focus(); }
+});
+
+/* ---------- カメラ ---------- */
+function startCam(){
+  if (typeof jsQR !== 'function'){ err('QR読み取り機能を読み込めませんでした'); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    err('このブラウザではカメラが使えません');
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } } })
+    .then(function(st){
+      SCAN.stream = st; SCAN.on = true;
+      var v = document.getElementById('cam');
+      v.srcObject = st;
+      v.setAttribute('playsinline','');
+      return v.play();
+    })
+    .then(function(){
+      document.getElementById('camBox').classList.remove('hide');
+      document.getElementById('btnStart').classList.add('hide');
+      document.getElementById('btnStop').classList.remove('hide');
+      tick();
+    })
+    .catch(function(e){
+      err('カメラを開けませんでした（' + (e && e.name ? e.name : '') + '）');
+    });
+}
+
+function tick(){
+  if (!SCAN.on) return;
+  var v = document.getElementById('cam');
+  var c = document.getElementById('cv');
+
+  if (v.readyState === v.HAVE_ENOUGH_DATA){
+    var w = v.videoWidth, h = v.videoHeight;
+    if (w && h){
+      var ctx = c.getContext('2d', { willReadFrequently:true });
+
+      // まず全体、外したら中央だけ切り出して再挑戦
+      c.width = w; c.height = h;
+      ctx.drawImage(v, 0, 0, w, h);
+      var code = read_(ctx, 0, 0, w, h);
+
+      if (!code){
+        var cw = Math.round(w * 0.62), ch = Math.round(h * 0.62);
+        var cx = Math.round((w - cw) / 2), cy = Math.round((h - ch) / 2);
+        code = read_(ctx, cx, cy, cw, ch);
+      }
+
+      if (code){ handleScan(code); return; }
+    }
+  }
+  SCAN.raf = requestAnimationFrame(tick);
+}
+
+function read_(ctx, x, y, w, h){
+  try{
+    var d = ctx.getImageData(x, y, w, h);
+    var r = jsQR(d.data, w, h, { inversionAttempts:'dontInvert' });
+    return (r && r.data) ? r.data : '';
+  }catch(e){ return ''; }
+}
+
+function stopCam(){
+  SCAN.on = false;
+  if (SCAN.raf){ cancelAnimationFrame(SCAN.raf); SCAN.raf = 0; }
+  if (SCAN.stream){
+    SCAN.stream.getTracks().forEach(function(t){ t.stop(); });
+    SCAN.stream = null;
+  }
+  document.getElementById('camBox').classList.add('hide');
+  document.getElementById('btnStart').classList.remove('hide');
+  document.getElementById('btnStop').classList.add('hide');
+}
+
+/* ---------- 読み取り後 ---------- */
+function handleScan(text){
+  var v = String(text || '').trim();
+  var m = v.match(/[?&]id=([^&#]+)/);        // URL形式のQRにも対応
+  if (m) v = decodeURIComponent(m[1]);
+  v = v.replace(/\s+/g, '').toUpperCase();
+  if (!v){ err('QRが空でした'); return; }
+
+  if (navigator.vibrate) navigator.vibrate(80);
+  stopCam();
+  go(v);
+}
+
+function goManual(){
+  var v = document.getElementById('no').value.trim().toUpperCase();
+  if (!v){ err('管理番号を入力してください'); return; }
+  go(v);
+}
+
+function go(kanriNo){
+  var base = getUrl();
+  if (!base){ showSet(); return; }
+  location.href = base + (base.indexOf('?') >= 0 ? '&' : '?')
+                + 'id=' + encodeURIComponent(kanriNo);
+}
+</script>
+</body>
+</html>
