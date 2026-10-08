@@ -241,8 +241,13 @@ function goManual(){
 function go(kanriNo){
   var base = getUrl();
   if (!base){ showSet(); return; }
-  location.href = base + (base.indexOf('?') >= 0 ? '&' : '?')
-                + 'id=' + encodeURIComponent(kanriNo);
+  var url = base + (base.indexOf('?') >= 0 ? '&' : '?')
+          + 'id=' + encodeURIComponent(kanriNo);
+  try{
+    window.top.location.href = url;    // 常にタブごと移動する
+  }catch(e){
+    location.href = url;
+  }
 }
 </script>
 </body>
